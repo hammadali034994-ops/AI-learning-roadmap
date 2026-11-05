@@ -16,7 +16,7 @@ You get a phased roadmap with topics, a hands-on project and resources for each 
 - **Optional personalisation:** your purpose (job, career switch, exam...), a specific goal, what you already know, learning style, budget and extra notes
 - Topic checklist with a **progress bar**, plus a project and a milestone for every phase
 - Download the roadmap as a `.md` file
-- Configurable Gemini model, with automatic fallback if a model is retired
+- Reliable: automatic retries when Gemini is busy (503 "high demand"), then backup models if it stays busy or a model is retired
 - Clear error messages (missing key, bad key, quota, invalid response)
 
 ## Project structure
@@ -53,7 +53,7 @@ You get a phased roadmap with topics, a hands-on project and resources for each 
    ```
 
 ## Changing the model
-The default model is `gemini-3.8-flash`. If a model is retired ("404 NOT_FOUND"), the app automatically tries newer fallback models. You can also change the model in the sidebar, or set the `GEMINI_MODEL` environment variable. See the list of current model names at https://ai.google.dev/gemini-api/docs/models
+The default model is `gemini-3.8-flash`. If it is busy (503) the app retries with a short wait; if it stays busy, is retired (404) or hits its quota (429), the app automatically tries backup models. You can also change the model in the sidebar, or set the `GEMINI_MODEL` environment variable. See the list of current model names at https://ai.google.dev/gemini-api/docs/models
 
 ## Deploy on Streamlit Community Cloud
 1. Push this project to a public GitHub repo.
@@ -64,6 +64,11 @@ The default model is `gemini-3.8-flash`. If a model is retired ("404 NOT_FOUND")
    GEMINI_API_KEY = "your_key"
    ```
 5. Click **Deploy**.
+
+## Troubleshooting
+- **503 UNAVAILABLE / high demand:** a temporary Google overload. The app retries automatically; if you still see the message, wait a minute and click Generate again.
+- **429 / quota:** you hit the free-tier rate limit. Wait a minute or check usage in Google AI Studio.
+- **400 API key not valid:** check the key in the sidebar or in your Streamlit secrets.
 
 ## Security
 Never commit your API key. `.gitignore` already excludes `.env` and `.streamlit/secrets.toml`.
