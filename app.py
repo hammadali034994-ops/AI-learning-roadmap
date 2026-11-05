@@ -8,14 +8,26 @@ learning roadmap from a domain, a skill level, the time available and
 import json
 import os
 import re
+import time
 
 import streamlit as st
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
+
+try:  # httpx ships with google-genai; used to spot network errors
+    import httpx
+except ImportError:  # pragma: no cover
+    httpx = None
 
 DEFAULT_MODEL = "gemini-3.8-flash"
 # Tried in order if the chosen model returns "404 NOT_FOUND" (model retired/renamed).
-FALLBACK_MODELS = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-flash-latest"]
+FALLBACK_MODELS = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-flash-latest", "gemini-flash-lite-latest"]
+
+# Retry settings for temporary errors such as "503 UNAVAILABLE / high demand".
+MAX_ATTEMPTS = 3          # attempts on the chosen model
+FALLBACK_ATTEMPTS = 2     # attempts on each fallback model
+RETRY_DELAYS = [2, 5]     # seconds to wait between attempts
 
 SKILL_LEVELS = ["Beginner", "Intermediate", "Advanced"]
 TIME_UNITS = ["Weeks", "Months", "Years"]
@@ -223,17 +235,50 @@ def roadmap_to_markdown(roadmap: dict, profile: dict = None) -> str:
     return "\n".join(lines)
 
 
-def _is_model_not_found(exc: Exception) -> bool:
-    return getattr(exc, "code", None) == 404 or "NOT_FOUND" in str(exc)
+def _error_kind(exc: Exception) -> str:
+    """Classify an API error as 'not_found', 'transient', 'quota' or 'other'."""
+    code = getattr(exc, "code", None)
+    msg = str(exc)
+    if code == 404 or "NOT_FOUND" in msg:
+        return "not_found"
+    if code == 429 or "RESOURCE_EXHAUSTED" in msg:
+        return "quota"
+    if (
+        code in (500, 502, 503, 504)
+        or isinstance(exc, genai_errors.ServerError)
+        or (httpx is not None and isinstance(exc, httpx.TransportError))
+        or isinstance(exc, (ConnectionError, TimeoutError))
+        or any(k in msg for k in ("UNAVAILABLE", "DEADLINE_EXCEEDED", "high demand", "overloaded"))
+    ):
+        return "transient"
+    return "other"
+
+
+def friendly_error(exc: Exception) -> str:
+    """Return a readable message for an error raised by generate_roadmap."""
+    kind = _error_kind(exc)
+    if kind == "transient":
+        return (
+            "Gemini is very busy right now (temporary high demand), even after several retries and "
+            "backup models. Please wait a minute and click Generate again. "
+            f"(Details: {exc})"
+        )
+    if kind == "quota":
+        return (
+            "Your Gemini API rate limit or quota was reached. Wait a minute and try again, "
+            f"or check your usage in Google AI Studio. (Details: {exc})"
+        )
+    return f"Gemini request failed: {exc}"
 
 
 def generate_roadmap(api_key: str, model: str, prompt: str) -> tuple:
     """Call Gemini and return (roadmap_dict, model_used).
 
-    - If the chosen model is not found (retired or renamed), the fallback
-      models are tried automatically.
-    - If the model's answer is not valid JSON, it is asked once more.
-    - Any other error is raised immediately.
+    - Temporary errors (503 high demand, timeouts, network) are retried with a
+      short wait, then the next fallback model is tried.
+    - Model not found (404) or quota/rate-limit (429) moves on to the next model.
+    - Invalid JSON from the model is retried.
+    - Any other error (for example an invalid API key) is raised immediately.
     """
     client = genai.Client(api_key=api_key)
     config = types.GenerateContentConfig(
@@ -243,17 +288,22 @@ def generate_roadmap(api_key: str, model: str, prompt: str) -> tuple:
     )
     candidates = [model] + [m for m in FALLBACK_MODELS if m != model]
     last_error = None
-    for name in candidates:
-        not_found = False
+    for index, name in enumerate(candidates):
+        attempts = MAX_ATTEMPTS if index == 0 else FALLBACK_ATTEMPTS
         parse_error = None
-        for _attempt in range(2):
+        outcome = None
+        for attempt in range(attempts):
             try:
                 response = client.models.generate_content(model=name, contents=prompt, config=config)
             except Exception as exc:
-                if _is_model_not_found(exc):
-                    last_error, not_found = exc, True
-                    break
-                raise
+                kind = _error_kind(exc)
+                if kind == "other":
+                    raise
+                last_error, outcome = exc, kind
+                if kind == "transient" and attempt < attempts - 1:
+                    time.sleep(RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)])
+                    continue
+                break  # not found / quota / retries used up: try the next model
             try:
                 text = response.text
             except Exception:
@@ -261,9 +311,9 @@ def generate_roadmap(api_key: str, model: str, prompt: str) -> tuple:
             try:
                 return parse_roadmap(text), name
             except ValueError as exc:
-                parse_error = exc
-        if not not_found:
-            raise parse_error
+                parse_error, outcome = exc, "parse"
+        if outcome == "parse":
+            raise parse_error  # the model answers, but not with usable JSON
     raise last_error
 
 
@@ -423,15 +473,15 @@ def main() -> None:
                 }
                 if used_model != model.strip():
                     st.info(
-                        f"Model '{model.strip()}' was not found, so '{used_model}' was used instead. "
-                        "Update the model name in the sidebar to hide this message."
+                        f"Model '{model.strip()}' was unavailable, so '{used_model}' was used instead. "
+                        "You can change the model name in the sidebar."
                     )
             except ValueError as exc:
                 st.session_state.pop("roadmap", None)
                 st.error(f"Could not read the AI response: {exc} Please try again.")
             except Exception as exc:  # network, quota, bad key, bad model name...
                 st.session_state.pop("roadmap", None)
-                st.error(f"Gemini request failed: {exc}")
+                st.error(friendly_error(exc))
 
     roadmap = st.session_state.get("roadmap")
     if roadmap:
