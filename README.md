@@ -50,7 +50,7 @@ You get a phased roadmap with topics, a hands-on project and resources for each 
    ```
 
 ## Changing the model
-The default model is `gemini-2.5-flash`. You can change it in the sidebar, or set the `GEMINI_MODEL` environment variable. See the list of current model names at https://ai.google.dev/gemini-api/docs/models
+The default model is `gemini-3.8-flash`. If a model is retired ("404 NOT_FOUND"), the app automatically tries newer fallback models. You can also change the model in the sidebar, or set the `GEMINI_MODEL` environment variable. See the list of current model names at https://ai.google.dev/gemini-api/docs/models
 
 ## Deploy on Streamlit Community Cloud
 1. Push this project to a public GitHub repo.
