@@ -3,17 +3,20 @@
 A Streamlit app that uses Google's **Gemini Flash** model to generate a personalised learning roadmap.
 
 You enter:
-- the **domain** you want to learn (e.g. Machine Learning, Web Development)
+- the **domain** you want to learn (e.g. Data Science, Web Development)
 - your **skill level** (Beginner / Intermediate / Advanced)
-- the **time** you have (weeks or months) and **hours per week**
+- the **time** you have (weeks, months or years) and **hours per week**
+- *(optional)* your goal, background, learning style, budget and notes
 
 You get a phased roadmap with topics, a hands-on project and resources for each phase, plus final tips. You can download it as a Markdown file.
 
 ## Features
-- Phase-by-phase roadmap fitted to your available time
+- Phase-by-phase roadmap fitted to your available time (weeks, months or years, up to 5 years)
 - Content adjusted to your skill level
-- Download roadmap as `.md`
-- Configurable Gemini model name
+- **Optional personalisation:** your purpose (job, career switch, exam...), a specific goal, what you already know, learning style, budget and extra notes
+- Topic checklist with a **progress bar**, plus a project and a milestone for every phase
+- Download the roadmap as a `.md` file
+- Configurable Gemini model, with automatic fallback if a model is retired
 - Clear error messages (missing key, bad key, quota, invalid response)
 
 ## Project structure
