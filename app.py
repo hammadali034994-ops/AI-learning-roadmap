@@ -12,7 +12,9 @@ import streamlit as st
 from google import genai
 from google.genai import types
 
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.8-flash"
+# Tried in order if the chosen model returns "404 NOT_FOUND" (model retired/renamed).
+FALLBACK_MODELS = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-flash-latest"]
 SKILL_LEVELS = ["Beginner", "Intermediate", "Advanced"]
 TIME_UNITS = ["Weeks", "Months"]
 
@@ -134,19 +136,35 @@ def roadmap_to_markdown(roadmap: dict) -> str:
     return "\n".join(lines)
 
 
-def generate_roadmap(api_key: str, model: str, prompt: str) -> dict:
-    """Call Gemini and return the parsed roadmap dict."""
+def _is_model_not_found(exc: Exception) -> bool:
+    msg = str(exc)
+    return "404" in msg or "NOT_FOUND" in msg
+
+
+def generate_roadmap(api_key: str, model: str, prompt: str) -> tuple:
+    """Call Gemini and return (roadmap_dict, model_used).
+
+    If the chosen model is not found (retired or renamed), the fallback
+    models are tried automatically. Other errors are raised immediately.
+    """
     client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_INSTRUCTION,
-            response_mime_type="application/json",
-            temperature=0.7,
-        ),
+    config = types.GenerateContentConfig(
+        system_instruction=SYSTEM_INSTRUCTION,
+        response_mime_type="application/json",
+        temperature=0.7,
     )
-    return parse_roadmap(response.text)
+    candidates = [model] + [m for m in FALLBACK_MODELS if m != model]
+    last_error = None
+    for name in candidates:
+        try:
+            response = client.models.generate_content(model=name, contents=prompt, config=config)
+        except Exception as exc:
+            if _is_model_not_found(exc):
+                last_error = exc
+                continue
+            raise
+        return parse_roadmap(response.text), name
+    raise last_error
 
 
 def get_default_api_key() -> str:
@@ -208,7 +226,7 @@ def main() -> None:
         model = st.text_input(
             "Gemini model",
             value=os.environ.get("GEMINI_MODEL", DEFAULT_MODEL),
-            help="Any Gemini Flash model name, e.g. gemini-2.5-flash",
+            help="Any Gemini Flash model name, e.g. gemini-3.8-flash",
         )
 
     with st.form("roadmap_form"):
@@ -232,9 +250,12 @@ def main() -> None:
             prompt = build_prompt(domain, level, int(duration), unit, int(hours))
             try:
                 with st.spinner("Building your roadmap..."):
-                    roadmap = generate_roadmap(api_key.strip(), model.strip(), prompt)
+                    roadmap, used_model = generate_roadmap(api_key.strip(), model.strip(), prompt)
                 st.session_state["roadmap"] = roadmap
                 st.session_state["domain"] = domain
+                if used_model != model.strip():
+                    st.info(f"Model '{model.strip()}' was not found, so '{used_model}' was used instead. "
+                            "Update the model name in the sidebar to hide this message.")
             except ValueError as exc:
                 st.session_state.pop("roadmap", None)
                 st.error(f"Could not read the AI response: {exc} Please try again.")
